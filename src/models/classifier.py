@@ -65,6 +65,9 @@ class Classifier(Vision, EasyResource):
         else:
             raise ValueError("mlmodel_name field is required in configuration")
 
+        if camera := attrs.get("camera_name", None):
+            deps.append(camera)
+
         return deps, []
 
     def reconfigure(
@@ -73,15 +76,17 @@ class Classifier(Vision, EasyResource):
         attrs = struct_to_dict(config.attributes)
 
         def getCamera(name: str) -> Camera:
-            return cast(Camera, dependencies[Camera.get_resource_name(name)])
+            return cast(Camera, dependencies.get(Camera.get_resource_name(name)))
 
         self.getCamera = getCamera
+        self.default_camera = str(attrs.get("camera_name"))
 
         try:
-            self.default_camera = str(attrs.get("camera_name"))
             self.mlmodel = cast(
                 MLModel,
-                dependencies[MLModel.get_resource_name(str(attrs.get("mlmodel_name")))],
+                dependencies.get(
+                    MLModel.get_resource_name(str(attrs.get("mlmodel_name")))
+                ),
             )
         except Exception as err:
             self.logger.error(
@@ -176,8 +181,12 @@ class Classifier(Vision, EasyResource):
         extra: Optional[Mapping[str, ValueTypes]] = None,
         timeout: Optional[float] = None,
     ) -> Vision.Properties:
-        self.logger.error("`get_properties` is not implemented")
-        raise NotImplementedError()
+        properties = Vision.Properties(
+            classifications_supported=True,
+            detections_supported=False,
+            object_point_clouds_supported=False,
+        )
+        return properties
 
     async def do_command(
         self,
