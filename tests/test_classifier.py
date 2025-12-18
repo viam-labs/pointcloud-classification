@@ -455,3 +455,46 @@ async def test_get_classifications_raises_not_implemented():
 
     with pytest.raises(NotImplementedError, match="not supported"):
         await classifier.get_classifications(mock_image, count=5)
+
+
+def test_reconfigure_with_sampling_method():
+    """Test that sampling_method is stored from config"""
+    from viam.proto.app.robot import ComponentConfig
+    from google.protobuf.struct_pb2 import Struct
+    from viam.services.mlmodel import MLModel
+
+    config = ComponentConfig()
+    config.name = "test"
+    attrs = Struct()
+    attrs["mlmodel_name"] = "model"
+    attrs["sampling_method"] = "voxel"
+    config.attributes.CopyFrom(attrs)
+
+    dependencies = {
+        MLModel.get_resource_name("model"): MagicMock(),
+    }
+
+    classifier = Classifier.new(config, dependencies)
+
+    assert classifier.sampling_method == "voxel"
+
+
+def test_reconfigure_default_sampling_method():
+    """Test default sampling_method is random"""
+    from viam.proto.app.robot import ComponentConfig
+    from google.protobuf.struct_pb2 import Struct
+    from viam.services.mlmodel import MLModel
+
+    config = ComponentConfig()
+    config.name = "test"
+    attrs = Struct()
+    attrs["mlmodel_name"] = "model"
+    config.attributes.CopyFrom(attrs)
+
+    dependencies = {
+        MLModel.get_resource_name("model"): MagicMock(),
+    }
+
+    classifier = Classifier.new(config, dependencies)
+
+    assert classifier.sampling_method == "random"

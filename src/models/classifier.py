@@ -81,6 +81,13 @@ class Classifier(Vision, EasyResource):
 
         self.getCamera = getCamera
         self.default_camera = str(attrs.get("camera_name"))
+        self.sampling_method = str(attrs.get("sampling_method", "random"))
+
+        if self.sampling_method not in ["random", "voxel", "fps"]:
+            self.logger.warning(
+                f"Invalid sampling_method '{self.sampling_method}', using 'random'"
+            )
+            self.sampling_method = "random"
 
         try:
             self.mlmodel = cast(
