@@ -3,7 +3,7 @@ from typing import ClassVar, List, Mapping, Optional, Sequence, Tuple, cast
 import numpy as np
 from typing_extensions import Self
 from viam.components.camera import Camera
-from viam.services.mlmodel import MLModel
+from viam.services.mlmodel import MLModel, Metadata
 from viam.media.video import ViamImage
 from viam.proto.app.robot import ComponentConfig
 from viam.proto.common import PointCloudObject, ResourceName
@@ -95,7 +95,7 @@ class Classifier(Vision, EasyResource):
             )
             raise err
 
-    def _parse_metadata(self, metadata):
+    def _parse_metadata(self, metadata: Metadata):
         """
         Parse metadata to extract model requirements.
 
@@ -136,7 +136,7 @@ class Classifier(Vision, EasyResource):
 
         # Try to load class labels from associated_files
         class_names = None
-        if hasattr(output_info, 'associated_files') and output_info.associated_files:
+        if hasattr(output_info, "associated_files") and output_info.associated_files:
             # TODO: Parse label file in future enhancement
             # For now, just set to None
             pass
@@ -198,7 +198,7 @@ class Classifier(Vision, EasyResource):
         centered = points - points.mean(axis=0)
 
         # Scale to unit sphere by max distance from origin
-        distances = np.sqrt((centered ** 2).sum(axis=1))
+        distances = np.sqrt((centered**2).sum(axis=1))
         max_dist = distances.max()
         if max_dist > 0:
             normalized = centered / max_dist
@@ -234,10 +234,14 @@ class Classifier(Vision, EasyResource):
             )
 
         # Random sampling (works for both up and down sampling)
-        indices = np.random.choice(current_count, target_count, replace=(current_count < target_count))
+        indices = np.random.choice(
+            current_count, target_count, replace=(current_count < target_count)
+        )
         return points[indices]
 
-    def _parse_point_cloud(self, pcd_bytes: bytes, mimetype: str) -> "o3d.geometry.PointCloud":
+    def _parse_point_cloud(
+        self, pcd_bytes: bytes, mimetype: str
+    ) -> "o3d.geometry.PointCloud":
         """
         Parse point cloud bytes into Open3D PointCloud object.
 
@@ -257,7 +261,7 @@ class Classifier(Vision, EasyResource):
         import os
 
         try:
-            with tempfile.NamedTemporaryFile(suffix='.pcd', delete=False) as tmp_file:
+            with tempfile.NamedTemporaryFile(suffix=".pcd", delete=False) as tmp_file:
                 tmp_file.write(pcd_bytes)
                 tmp_path = tmp_file.name
 
@@ -369,6 +373,17 @@ class Classifier(Vision, EasyResource):
             if len(images) > 0:
                 result.image = images[0]
 
+        if return_classifications:
+            # Get count from extra or use default
+            count = 5  # Default count
+            if extra and "count" in extra:
+                count = int(extra["count"])
+
+            classifications = await self.get_classifications_from_camera(
+                camera_name, count, extra=extra, timeout=timeout
+            )
+            result.classifications = classifications
+
         return result
 
     async def get_detections_from_camera(
@@ -421,9 +436,7 @@ class Classifier(Vision, EasyResource):
         camera = self.getCamera(camera_name)
 
         # Get point cloud
-        pcd_bytes, mimetype = await camera.get_point_cloud(
-            extra=extra, timeout=timeout
-        )
+        pcd_bytes, mimetype = await camera.get_point_cloud(timeout=timeout)
 
         # Parse with Open3D
         cloud = self._parse_point_cloud(pcd_bytes, mimetype)
@@ -440,9 +453,7 @@ class Classifier(Vision, EasyResource):
 
         # Inference
         input_tensors = {input_name: preprocessed}
-        output_tensors = await self.mlmodel.infer(
-            input_tensors, extra=extra, timeout=timeout
-        )
+        output_tensors = await self.mlmodel.infer(input_tensors, timeout=timeout)
 
         # Extract output
         logits = output_tensors[output_name]
