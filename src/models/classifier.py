@@ -126,7 +126,7 @@ class Classifier(Vision, EasyResource):
         if len(shape) == 2:
             has_batch_dim = False
             target_points, target_features = shape
-        elif len(shape) == 3 and shape[0] == 1:
+        elif len(shape) == 3 and (shape[0] == 1 or shape[0] == -1):
             has_batch_dim = True
             target_points, target_features = shape[1], shape[2]
         else:
@@ -462,8 +462,31 @@ class Classifier(Vision, EasyResource):
 
         # Extract output
         logits = output_tensors[output_name]
-        if has_batch_dim:
-            logits = logits[0]  # Remove batch dimension
+        self.logger.debug(f"Raw output shape: {logits.shape}, dtype: {logits.dtype}")
+
+        # Handle output shape correctly by inspecting actual dimensions
+        # Output could be [num_classes] or [1, num_classes] or [batch, num_classes]
+        if logits.ndim == 2:
+            # Has batch dimension: [batch, num_classes]
+            if logits.shape[0] != 1:
+                raise ValueError(
+                    f"Expected single sample output, got batch size {logits.shape[0]}"
+                )
+            logits = logits[0]  # Remove batch dimension -> [num_classes]
+        elif logits.ndim == 1:
+            # Already 1D: [num_classes] - use as-is
+            pass
+        elif logits.ndim == 0:
+            # Scalar output - this shouldn't happen for classification
+            raise ValueError(
+                "Model returned scalar output, expected array of class logits"
+            )
+        else:
+            raise ValueError(
+                f"Unexpected output shape {logits.shape}, expected 1D or 2D array"
+            )
+
+        self.logger.debug(f"Final logits shape: {logits.shape}")
 
         # Convert to classifications
         return self._logits_to_classifications(logits, class_names, count)
