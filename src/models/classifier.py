@@ -1,8 +1,9 @@
 from typing import ClassVar, List, Mapping, Optional, Sequence, Tuple, cast
 
 import numpy as np
-import open3d as o3d
 from typing_extensions import Self
+
+from utils.pointcloud import PointCloud, parse_pcd_bytes
 from viam.components.camera import Camera
 from viam.services.mlmodel import MLModel, Metadata
 from viam.media.video import ViamImage
@@ -248,11 +249,9 @@ class Classifier(Vision, EasyResource):
         )
         return points[indices]
 
-    def _parse_point_cloud(
-        self, pcd_bytes: bytes, mimetype: str
-    ) -> "o3d.geometry.PointCloud":
+    def _parse_point_cloud(self, pcd_bytes: bytes, mimetype: str) -> PointCloud:
         """
-        Parse point cloud bytes into Open3D PointCloud object.
+        Parse point cloud bytes into PointCloud object.
 
         Args:
             pcd_bytes: Raw point cloud bytes from camera
@@ -260,35 +259,25 @@ class Classifier(Vision, EasyResource):
                      TODO: Use mimetype to support multiple formats in future
 
         Returns:
-            Open3D PointCloud object
+            PointCloud object
 
         Raises:
             RuntimeError: If parsing fails
         """
-        import tempfile
-        import os
-
         try:
-            with tempfile.NamedTemporaryFile(suffix=".pcd", delete=False) as tmp_file:
-                tmp_file.write(pcd_bytes)
-                tmp_path = tmp_file.name
+            pcd = parse_pcd_bytes(pcd_bytes)
 
-            try:
-                pcd = o3d.io.read_point_cloud(tmp_path)
+            if len(pcd.points) == 0:
+                raise RuntimeError("Parsed point cloud is empty")
 
-                if len(pcd.points) == 0:
-                    raise RuntimeError("Parsed point cloud is empty")
-
-                return pcd
-            finally:
-                os.unlink(tmp_path)
+            return pcd
 
         except Exception as e:
             raise RuntimeError(f"Failed to parse point cloud data: {e}")
 
     def _preprocess_point_cloud(
         self,
-        cloud: "o3d.geometry.PointCloud",
+        cloud: PointCloud,
         target_points: int,
         target_features: int,
         sampling_method: str,
@@ -297,7 +286,7 @@ class Classifier(Vision, EasyResource):
         Preprocess point cloud for model inference.
 
         Args:
-            cloud: Open3D point cloud object
+            cloud: PointCloud object
             target_points: Number of points required by model (N)
             target_features: Number of features per point (3, 6, or 9)
             sampling_method: "random", "voxel", or "fps"
@@ -309,7 +298,7 @@ class Classifier(Vision, EasyResource):
             ValueError: If required features are missing from cloud
         """
         # Extract XYZ (always present)
-        points = np.asarray(cloud.points)
+        points = cloud.points
 
         # Check and extract additional features
         features = [points]
@@ -321,7 +310,7 @@ class Classifier(Vision, EasyResource):
                     f"Model requires RGB data (shape [N,{target_features}]) "
                     "but point cloud has no colors"
                 )
-            colors = np.asarray(cloud.colors)
+            colors = cloud.colors
             features.append(colors)
 
         # Extract normals if needed (target_features >= 9)
@@ -331,7 +320,7 @@ class Classifier(Vision, EasyResource):
                     f"Model requires normals (shape [N,{target_features}]) "
                     "but point cloud has none"
                 )
-            normals = np.asarray(cloud.normals)
+            normals = cloud.normals
             features.append(normals)
 
         # Concatenate features

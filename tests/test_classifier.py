@@ -1,12 +1,56 @@
 import numpy as np
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from viam.proto.service.vision import Classification
-from viam.services.mlmodel import Metadata, TensorInfo
-import open3d as o3d
-import io
+from unittest.mock import AsyncMock, MagicMock
 
 from src.models.classifier import Classifier
+from src.utils.pointcloud import PointCloud
+
+
+def _create_pcd_bytes(points: np.ndarray, colors: np.ndarray = None) -> bytes:
+    """Helper to create PCD format bytes from numpy arrays"""
+    num_points = points.shape[0]
+    has_colors = colors is not None
+
+    # Create header
+    header_lines = [
+        "# .PCD v0.7 - Point Cloud Data file format",
+        "VERSION 0.7",
+    ]
+
+    if has_colors:
+        header_lines.append("FIELDS x y z rgb")
+        header_lines.append("SIZE 4 4 4 4")
+        header_lines.append("TYPE F F F F")
+        header_lines.append("COUNT 1 1 1 1")
+    else:
+        header_lines.append("FIELDS x y z")
+        header_lines.append("SIZE 4 4 4")
+        header_lines.append("TYPE F F F")
+        header_lines.append("COUNT 1 1 1")
+
+    header_lines.extend([
+        f"WIDTH {num_points}",
+        "HEIGHT 1",
+        "VIEWPOINT 0 0 0 1 0 0 0",
+        f"POINTS {num_points}",
+        "DATA ascii",
+    ])
+
+    # Create data lines
+    data_lines = []
+    for i in range(num_points):
+        x, y, z = points[i]
+        if has_colors:
+            # Convert RGB [0,1] to packed integer
+            r, g, b = colors[i]
+            rgb_int = (int(r * 255) << 16) | (int(g * 255) << 8) | int(b * 255)
+            data_lines.append(f"{x} {y} {z} {rgb_int}")
+        else:
+            data_lines.append(f"{x} {y} {z}")
+
+    # Combine and encode
+    pcd_text = "\n".join(header_lines + data_lines) + "\n"
+    return pcd_text.encode("ascii")
 
 
 def test_parse_metadata_no_batch_dim():
@@ -206,36 +250,23 @@ def test_sample_point_cloud_exact_count():
 
 def test_parse_point_cloud_pcd_format():
     """Test parsing PCD format point cloud bytes"""
-    # Create a simple point cloud
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(
-        np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
-    )
-
-    # Convert to bytes (simulate camera.get_point_cloud output)
-    # Write to buffer
-    import tempfile
-
-    with tempfile.NamedTemporaryFile(suffix=".pcd", delete=False) as f:
-        o3d.io.write_point_cloud(f.name, pcd)
-        f.seek(0)
-        with open(f.name, "rb") as pcd_file:
-            pcd_bytes = pcd_file.read()
+    # Create test points
+    points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
+    pcd_bytes = _create_pcd_bytes(points)
 
     classifier = MagicMock(spec=Classifier)
     result = Classifier._parse_point_cloud(classifier, pcd_bytes, "application/pcd")
 
-    assert isinstance(result, o3d.geometry.PointCloud)
-    points = np.asarray(result.points)
-    assert points.shape == (3, 3)
-    assert np.allclose(points[0], [1.0, 2.0, 3.0])
+    assert isinstance(result, PointCloud)
+    assert result.points.shape == (3, 3)
+    assert np.allclose(result.points[0], [1.0, 2.0, 3.0])
 
 
 def test_preprocess_point_cloud_xyz_only():
     """Test preprocessing with XYZ features only"""
-    # Create Open3D point cloud
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(np.random.rand(2000, 3) * 10)
+    # Create PointCloud
+    points = np.random.rand(2000, 3) * 10
+    pcd = PointCloud(points=points)
 
     target_points = 1024
     target_features = 3
@@ -259,10 +290,10 @@ def test_preprocess_point_cloud_xyz_only():
 
 def test_preprocess_point_cloud_xyz_rgb():
     """Test preprocessing with XYZ+RGB features"""
-    # Create Open3D point cloud with colors
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(np.random.rand(500, 3) * 10)
-    pcd.colors = o3d.utility.Vector3dVector(np.random.rand(500, 3))
+    # Create PointCloud with colors
+    points = np.random.rand(500, 3) * 10
+    colors = np.random.rand(500, 3)
+    pcd = PointCloud(points=points, colors=colors)
 
     target_points = 256
     target_features = 6
@@ -290,8 +321,8 @@ def test_preprocess_point_cloud_xyz_rgb():
 def test_preprocess_point_cloud_missing_rgb():
     """Test error when RGB required but not available"""
     # Create point cloud without colors
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(np.random.rand(100, 3))
+    points = np.random.rand(100, 3)
+    pcd = PointCloud(points=points)
 
     classifier = MagicMock(spec=Classifier)
 
@@ -307,15 +338,8 @@ async def test_get_classifications_from_camera_integration():
     mock_mlmodel = AsyncMock()
 
     # Create test point cloud bytes
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(np.random.rand(2000, 3) * 10)
-
-    import tempfile
-
-    with tempfile.NamedTemporaryFile(suffix=".pcd", delete=False) as f:
-        o3d.io.write_point_cloud(f.name, pcd)
-        with open(f.name, "rb") as pcd_file:
-            pcd_bytes = pcd_file.read()
+    points = np.random.rand(2000, 3) * 10
+    pcd_bytes = _create_pcd_bytes(points)
 
     mock_camera.get_point_cloud = AsyncMock(return_value=(pcd_bytes, "application/pcd"))
 
@@ -376,15 +400,8 @@ async def test_capture_all_from_camera_with_classifications():
     mock_camera = AsyncMock()
     mock_mlmodel = AsyncMock()
 
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(np.random.rand(1000, 3) * 5)
-
-    import tempfile
-
-    with tempfile.NamedTemporaryFile(suffix=".pcd", delete=False) as f:
-        o3d.io.write_point_cloud(f.name, pcd)
-        with open(f.name, "rb") as pcd_file:
-            pcd_bytes = pcd_file.read()
+    points = np.random.rand(1000, 3) * 5
+    pcd_bytes = _create_pcd_bytes(points)
 
     mock_camera.get_point_cloud = AsyncMock(return_value=(pcd_bytes, "application/pcd"))
 

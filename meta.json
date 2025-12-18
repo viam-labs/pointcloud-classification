@@ -8,6 +8,14 @@
   "markdown_link": "README.md",
   "entrypoint": "dist/main",
   "first_run": "",
+  "models": [
+    {
+      "api": "rdk:service:vision",
+      "model": "viam-labs:pointcloud-classification:classifier",
+      "markdown_link": "viam-labs_pointcloud-classification_classifier.md",
+      "description": "Computer vision service to create classifications from point cloud data"
+    }
+  ],
   "build": {
     "build": "./build.sh",
     "setup": "./setup.sh",
