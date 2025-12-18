@@ -1,6 +1,7 @@
 from typing import ClassVar, List, Mapping, Optional, Sequence, Tuple, cast
 
 import numpy as np
+import open3d as o3d
 from typing_extensions import Self
 from viam.components.camera import Camera
 from viam.services.mlmodel import MLModel, Metadata
@@ -263,7 +264,6 @@ class Classifier(Vision, EasyResource):
         Raises:
             RuntimeError: If parsing fails
         """
-        import open3d as o3d
         import tempfile
         import os
 
@@ -307,8 +307,6 @@ class Classifier(Vision, EasyResource):
         Raises:
             ValueError: If required features are missing from cloud
         """
-        import open3d as o3d
-
         # Extract XYZ (always present)
         points = np.asarray(cloud.points)
 
