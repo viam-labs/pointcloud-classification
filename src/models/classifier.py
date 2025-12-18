@@ -1,8 +1,10 @@
 from typing import ClassVar, List, Mapping, Optional, Sequence, Tuple, cast
 
+import numpy as np
+import open3d as o3d
 from typing_extensions import Self
 from viam.components.camera import Camera
-from viam.services.mlmodel import MLModel
+from viam.services.mlmodel import MLModel, Metadata
 from viam.media.video import ViamImage
 from viam.proto.app.robot import ComponentConfig
 from viam.proto.common import PointCloudObject, ResourceName
@@ -23,6 +25,7 @@ class Classifier(Vision, EasyResource):
 
     mlmodel: MLModel
     default_camera: str
+    labels: Optional[List[str]]
 
     @classmethod
     def new(
@@ -80,6 +83,13 @@ class Classifier(Vision, EasyResource):
 
         self.getCamera = getCamera
         self.default_camera = str(attrs.get("camera_name"))
+        self.sampling_method = str(attrs.get("sampling_method", "random"))
+
+        if self.sampling_method not in ["random", "voxel", "fps"]:
+            self.logger.warning(
+                f"Invalid sampling_method '{self.sampling_method}', using 'random'"
+            )
+            self.sampling_method = "random"
 
         try:
             self.mlmodel = cast(
@@ -93,6 +103,254 @@ class Classifier(Vision, EasyResource):
                 f"Unable to configure pointcloud classifier vision service: {err}"
             )
             raise err
+
+    def _parse_metadata(self, metadata: Metadata):
+        """
+        Parse metadata to extract model requirements.
+
+        Args:
+            metadata: MLModel metadata object
+
+        Returns:
+            Tuple of (input_name, target_points, target_features, has_batch_dim,
+                     output_name, class_names)
+
+        Raises:
+            ValueError: If shape is dynamic or unexpected format
+        """
+        # Get first input tensor info
+        input_info = metadata.input_info[0]
+        input_name = input_info.name
+        shape = list(input_info.shape)
+
+        # Parse shape: [N, F] or [1, N, F]
+        if len(shape) == 2:
+            has_batch_dim = False
+            target_points, target_features = shape
+        elif len(shape) == 3 and (shape[0] == 1 or shape[0] == -1):
+            has_batch_dim = True
+            target_points, target_features = shape[1], shape[2]
+        else:
+            raise ValueError(f"Unexpected input shape: {shape}")
+
+        # Check for dynamic shapes
+        if target_points == -1 or target_features == -1:
+            raise ValueError(
+                f"Model has dynamic input shape {shape}; cannot determine requirements"
+            )
+
+        # Get output info
+        output_info = metadata.output_info[0]
+        output_name = output_info.name
+        output_extras = struct_to_dict(output_info.extra)
+
+        # Try to load class labels from extra
+        class_names = None
+        if label_path := output_extras.get("labels"):
+            with open(label_path, "r") as f:
+                class_names = f.read().splitlines()
+
+        return (
+            input_name,
+            int(target_points),
+            int(target_features),
+            has_batch_dim,
+            output_name,
+            class_names,
+        )
+
+    def _logits_to_classifications(
+        self, logits: "np.ndarray", class_names: Optional[List[str]], count: int
+    ) -> List[Classification]:
+        """
+        Convert model logits to Classification objects.
+
+        Args:
+            logits: Raw model output (1D array)
+            class_names: List of class names (or None to use indices)
+            count: Number of top classifications to return
+
+        Returns:
+            List[Classification] sorted by confidence descending
+        """
+        # Apply softmax: probabilities = exp(logits) / sum(exp(logits))
+        # Subtract max for numerical stability
+        exp_logits = np.exp(logits - np.max(logits))
+        probs = exp_logits / exp_logits.sum()
+
+        # Sort by probability descending
+        indices = np.argsort(probs)[::-1]
+
+        # Take top count items
+        top_indices = indices[:count]
+
+        # Create Classification objects
+        if class_names is None:
+            class_names = [str(i) for i in range(len(logits))]
+
+        return [
+            Classification(class_name=class_names[i], confidence=float(probs[i]))
+            for i in top_indices
+        ]
+
+    def _normalize_point_cloud(self, points: "np.ndarray") -> "np.ndarray":
+        """
+        Normalize point cloud to unit sphere.
+
+        Args:
+            points: Nx3 array of XYZ coordinates
+
+        Returns:
+            Normalized points centered at origin, scaled to unit sphere
+        """
+        # Center at origin
+        centered = points - points.mean(axis=0)
+
+        # Scale to unit sphere by max distance from origin
+        distances = np.sqrt((centered**2).sum(axis=1))
+        max_dist = distances.max()
+        if max_dist > 0:
+            normalized = centered / max_dist
+        else:
+            normalized = centered
+
+        return normalized
+
+    def _sample_point_cloud(
+        self, points: "np.ndarray", target_count: int, method: str
+    ) -> "np.ndarray":
+        """
+        Sample point cloud to target number of points.
+
+        Args:
+            points: Nx3 (or NxF) array of point features
+            target_count: Desired number of points
+            method: Sampling method ("random", "voxel", or "fps")
+
+        Returns:
+            Sampled points with shape [target_count, F]
+        """
+        current_count = points.shape[0]
+
+        if current_count == target_count:
+            return points
+
+        # For now, only implement random sampling
+        # TODO: Add voxel and fps methods later
+        if method != "random":
+            self.logger.warning(
+                f"Sampling method '{method}' not yet implemented, using random"
+            )
+
+        # Random sampling (works for both up and down sampling)
+        indices = np.random.choice(
+            current_count, target_count, replace=(current_count < target_count)
+        )
+        return points[indices]
+
+    def _parse_point_cloud(
+        self, pcd_bytes: bytes, mimetype: str
+    ) -> "o3d.geometry.PointCloud":
+        """
+        Parse point cloud bytes into Open3D PointCloud object.
+
+        Args:
+            pcd_bytes: Raw point cloud bytes from camera
+            mimetype: MIME type of the point cloud data
+                     TODO: Use mimetype to support multiple formats in future
+
+        Returns:
+            Open3D PointCloud object
+
+        Raises:
+            RuntimeError: If parsing fails
+        """
+        import tempfile
+        import os
+
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".pcd", delete=False) as tmp_file:
+                tmp_file.write(pcd_bytes)
+                tmp_path = tmp_file.name
+
+            try:
+                pcd = o3d.io.read_point_cloud(tmp_path)
+
+                if len(pcd.points) == 0:
+                    raise RuntimeError("Parsed point cloud is empty")
+
+                return pcd
+            finally:
+                os.unlink(tmp_path)
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to parse point cloud data: {e}")
+
+    def _preprocess_point_cloud(
+        self,
+        cloud: "o3d.geometry.PointCloud",
+        target_points: int,
+        target_features: int,
+        sampling_method: str,
+    ) -> "np.ndarray":
+        """
+        Preprocess point cloud for model inference.
+
+        Args:
+            cloud: Open3D point cloud object
+            target_points: Number of points required by model (N)
+            target_features: Number of features per point (3, 6, or 9)
+            sampling_method: "random", "voxel", or "fps"
+
+        Returns:
+            numpy array of shape [target_points, target_features]
+
+        Raises:
+            ValueError: If required features are missing from cloud
+        """
+        # Extract XYZ (always present)
+        points = np.asarray(cloud.points)
+
+        # Check and extract additional features
+        features = [points]
+
+        # Extract RGB if needed (target_features >= 6)
+        if target_features >= 6:
+            if not cloud.has_colors():
+                raise ValueError(
+                    f"Model requires RGB data (shape [N,{target_features}]) "
+                    "but point cloud has no colors"
+                )
+            colors = np.asarray(cloud.colors)
+            features.append(colors)
+
+        # Extract normals if needed (target_features >= 9)
+        if target_features >= 9:
+            if not cloud.has_normals():
+                raise ValueError(
+                    f"Model requires normals (shape [N,{target_features}]) "
+                    "but point cloud has none"
+                )
+            normals = np.asarray(cloud.normals)
+            features.append(normals)
+
+        # Concatenate features
+        combined = np.concatenate(features, axis=1)
+
+        # Resample to target_points
+        sampled = self._sample_point_cloud(combined, target_points, sampling_method)
+
+        # Normalize XYZ coordinates only (first 3 columns)
+        xyz_normalized = self._normalize_point_cloud(sampled[:, :3])
+
+        # Combine normalized XYZ with other features
+        if target_features == 3:
+            result = xyz_normalized
+        else:
+            # Keep RGB/normals as-is, replace XYZ with normalized
+            result = np.concatenate([xyz_normalized, sampled[:, 3:]], axis=1)
+
+        return result
 
     async def capture_all_from_camera(
         self,
@@ -120,6 +378,17 @@ class Classifier(Vision, EasyResource):
 
             if len(images) > 0:
                 result.image = images[0]
+
+        if return_classifications:
+            # Get count from extra or use default
+            count = 5  # Default count
+            if extra and "count" in extra:
+                count = int(extra["count"])
+
+            classifications = await self.get_classifications_from_camera(
+                camera_name, count, extra=extra, timeout=timeout
+            )
+            result.classifications = classifications
 
         return result
 
@@ -151,8 +420,77 @@ class Classifier(Vision, EasyResource):
         extra: Optional[Mapping[str, ValueTypes]] = None,
         timeout: Optional[float] = None,
     ) -> List[Classification]:
-        self.logger.error("`get_classifications_from_camera` is not implemented")
-        raise NotImplementedError()
+        """Get classifications from point cloud captured by camera."""
+        # Get metadata
+        metadata = await self.mlmodel.metadata()
+        (
+            input_name,
+            target_points,
+            target_features,
+            has_batch_dim,
+            output_name,
+            class_names,
+        ) = self._parse_metadata(metadata)
+
+        # Get camera
+        if camera_name == "" and self.default_camera == "":
+            raise ValueError(
+                "No camera name provided and no default camera name configured"
+            )
+        elif camera_name == "":
+            camera_name = self.default_camera
+        camera = self.getCamera(camera_name)
+
+        # Get point cloud
+        pcd_bytes, mimetype = await camera.get_point_cloud(timeout=timeout)
+
+        # Parse with Open3D
+        cloud = self._parse_point_cloud(pcd_bytes, mimetype)
+
+        # Preprocess
+        sampling_method = getattr(self, "sampling_method", "random")
+        preprocessed = self._preprocess_point_cloud(
+            cloud, target_points, target_features, sampling_method
+        )
+
+        # Add batch dimension if needed
+        if has_batch_dim:
+            preprocessed = preprocessed[np.newaxis, ...]
+
+        # Inference
+        input_tensors = {input_name: preprocessed}
+        output_tensors = await self.mlmodel.infer(input_tensors, timeout=timeout)
+
+        # Extract output
+        logits = output_tensors[output_name]
+        self.logger.debug(f"Raw output shape: {logits.shape}, dtype: {logits.dtype}")
+
+        # Handle output shape correctly by inspecting actual dimensions
+        # Output could be [num_classes] or [1, num_classes] or [batch, num_classes]
+        if logits.ndim == 2:
+            # Has batch dimension: [batch, num_classes]
+            if logits.shape[0] != 1:
+                raise ValueError(
+                    f"Expected single sample output, got batch size {logits.shape[0]}"
+                )
+            logits = logits[0]  # Remove batch dimension -> [num_classes]
+        elif logits.ndim == 1:
+            # Already 1D: [num_classes] - use as-is
+            pass
+        elif logits.ndim == 0:
+            # Scalar output - this shouldn't happen for classification
+            raise ValueError(
+                "Model returned scalar output, expected array of class logits"
+            )
+        else:
+            raise ValueError(
+                f"Unexpected output shape {logits.shape}, expected 1D or 2D array"
+            )
+
+        self.logger.debug(f"Final logits shape: {logits.shape}")
+
+        # Convert to classifications
+        return self._logits_to_classifications(logits, class_names, count)
 
     async def get_classifications(
         self,
@@ -162,8 +500,11 @@ class Classifier(Vision, EasyResource):
         extra: Optional[Mapping[str, ValueTypes]] = None,
         timeout: Optional[float] = None,
     ) -> List[Classification]:
-        self.logger.error("`get_classifications` is not implemented")
-        raise NotImplementedError()
+        self.logger.error("Point cloud classification requires camera input")
+        raise NotImplementedError(
+            "get_classifications() not supported for point clouds; "
+            "use get_classifications_from_camera() instead"
+        )
 
     async def get_object_point_clouds(
         self,
