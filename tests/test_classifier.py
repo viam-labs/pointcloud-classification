@@ -140,3 +140,45 @@ def test_normalize_point_cloud():
 
     # Check shape unchanged
     assert result.shape == points.shape
+
+
+def test_sample_point_cloud_downsample():
+    """Test downsampling to fewer points"""
+    points = np.random.rand(2000, 3)
+    target_count = 1024
+
+    classifier = MagicMock(spec=Classifier)
+    result = Classifier._sample_point_cloud(classifier, points, target_count, "random")
+
+    assert result.shape == (1024, 3)
+    # Check all result points exist in original
+    for point in result[:5]:  # Check first few
+        # Should be close to one of the original points
+        distances = np.sqrt(((points - point) ** 2).sum(axis=1))
+        assert distances.min() < 1e-6
+
+
+def test_sample_point_cloud_upsample():
+    """Test upsampling to more points (with duplication)"""
+    points = np.random.rand(100, 3)
+    target_count = 500
+
+    classifier = MagicMock(spec=Classifier)
+    result = Classifier._sample_point_cloud(classifier, points, target_count, "random")
+
+    assert result.shape == (500, 3)
+    # All result points should match one of the original points
+    for point in result[:10]:  # Check first few
+        distances = np.sqrt(((points - point) ** 2).sum(axis=1))
+        assert distances.min() < 1e-6
+
+
+def test_sample_point_cloud_exact_count():
+    """Test when point count already matches"""
+    points = np.random.rand(1024, 3)
+    target_count = 1024
+
+    classifier = MagicMock(spec=Classifier)
+    result = Classifier._sample_point_cloud(classifier, points, target_count, "random")
+
+    assert result.shape == (1024, 3)

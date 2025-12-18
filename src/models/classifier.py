@@ -207,6 +207,36 @@ class Classifier(Vision, EasyResource):
 
         return normalized
 
+    def _sample_point_cloud(
+        self, points: "np.ndarray", target_count: int, method: str
+    ) -> "np.ndarray":
+        """
+        Sample point cloud to target number of points.
+
+        Args:
+            points: Nx3 (or NxF) array of point features
+            target_count: Desired number of points
+            method: Sampling method ("random", "voxel", or "fps")
+
+        Returns:
+            Sampled points with shape [target_count, F]
+        """
+        current_count = points.shape[0]
+
+        if current_count == target_count:
+            return points
+
+        # For now, only implement random sampling
+        # TODO: Add voxel and fps methods later
+        if method != "random":
+            self.logger.warning(
+                f"Sampling method '{method}' not yet implemented, using random"
+            )
+
+        # Random sampling (works for both up and down sampling)
+        indices = np.random.choice(current_count, target_count, replace=(current_count < target_count))
+        return points[indices]
+
     async def capture_all_from_camera(
         self,
         camera_name: str,
