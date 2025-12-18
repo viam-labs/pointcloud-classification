@@ -212,3 +212,65 @@ def test_parse_point_cloud_pcd_format():
     points = np.asarray(result.points)
     assert points.shape == (3, 3)
     assert np.allclose(points[0], [1.0, 2.0, 3.0])
+
+
+def test_preprocess_point_cloud_xyz_only():
+    """Test preprocessing with XYZ features only"""
+    # Create Open3D point cloud
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(np.random.rand(2000, 3) * 10)
+
+    target_points = 1024
+    target_features = 3
+
+    classifier = MagicMock(spec=Classifier)
+    classifier._sample_point_cloud = Classifier._sample_point_cloud.__get__(classifier, Classifier)
+    classifier._normalize_point_cloud = Classifier._normalize_point_cloud.__get__(classifier, Classifier)
+
+    result = Classifier._preprocess_point_cloud(
+        classifier, pcd, target_points, target_features, "random"
+    )
+
+    assert result.shape == (1024, 3)
+    # Check normalized (max value should be ~1)
+    assert np.abs(result).max() <= 1.0 + 1e-6
+
+
+def test_preprocess_point_cloud_xyz_rgb():
+    """Test preprocessing with XYZ+RGB features"""
+    # Create Open3D point cloud with colors
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(np.random.rand(500, 3) * 10)
+    pcd.colors = o3d.utility.Vector3dVector(np.random.rand(500, 3))
+
+    target_points = 256
+    target_features = 6
+
+    classifier = MagicMock(spec=Classifier)
+    classifier._sample_point_cloud = Classifier._sample_point_cloud.__get__(classifier, Classifier)
+    classifier._normalize_point_cloud = Classifier._normalize_point_cloud.__get__(classifier, Classifier)
+
+    result = Classifier._preprocess_point_cloud(
+        classifier, pcd, target_points, target_features, "random"
+    )
+
+    assert result.shape == (256, 6)
+    # XYZ should be normalized
+    assert np.abs(result[:, :3]).max() <= 1.0 + 1e-6
+    # RGB should be in [0, 1]
+    assert result[:, 3:].min() >= 0.0
+    assert result[:, 3:].max() <= 1.0
+
+
+def test_preprocess_point_cloud_missing_rgb():
+    """Test error when RGB required but not available"""
+    # Create point cloud without colors
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(np.random.rand(100, 3))
+
+    classifier = MagicMock(spec=Classifier)
+
+    with pytest.raises(ValueError, match="requires RGB"):
+        Classifier._preprocess_point_cloud(
+            classifier, pcd, 100, 6, "random"
+        )

@@ -274,6 +274,74 @@ class Classifier(Vision, EasyResource):
         except Exception as e:
             raise RuntimeError(f"Failed to parse point cloud data: {e}")
 
+    def _preprocess_point_cloud(
+        self,
+        cloud: "o3d.geometry.PointCloud",
+        target_points: int,
+        target_features: int,
+        sampling_method: str,
+    ) -> "np.ndarray":
+        """
+        Preprocess point cloud for model inference.
+
+        Args:
+            cloud: Open3D point cloud object
+            target_points: Number of points required by model (N)
+            target_features: Number of features per point (3, 6, or 9)
+            sampling_method: "random", "voxel", or "fps"
+
+        Returns:
+            numpy array of shape [target_points, target_features]
+
+        Raises:
+            ValueError: If required features are missing from cloud
+        """
+        import open3d as o3d
+
+        # Extract XYZ (always present)
+        points = np.asarray(cloud.points)
+
+        # Check and extract additional features
+        features = [points]
+
+        # Extract RGB if needed (target_features >= 6)
+        if target_features >= 6:
+            if not cloud.has_colors():
+                raise ValueError(
+                    f"Model requires RGB data (shape [N,{target_features}]) "
+                    "but point cloud has no colors"
+                )
+            colors = np.asarray(cloud.colors)
+            features.append(colors)
+
+        # Extract normals if needed (target_features >= 9)
+        if target_features >= 9:
+            if not cloud.has_normals():
+                raise ValueError(
+                    f"Model requires normals (shape [N,{target_features}]) "
+                    "but point cloud has none"
+                )
+            normals = np.asarray(cloud.normals)
+            features.append(normals)
+
+        # Concatenate features
+        combined = np.concatenate(features, axis=1)
+
+        # Resample to target_points
+        sampled = self._sample_point_cloud(combined, target_points, sampling_method)
+
+        # Normalize XYZ coordinates only (first 3 columns)
+        xyz_normalized = self._normalize_point_cloud(sampled[:, :3])
+
+        # Combine normalized XYZ with other features
+        if target_features == 3:
+            result = xyz_normalized
+        else:
+            # Keep RGB/normals as-is, replace XYZ with normalized
+            result = np.concatenate([xyz_normalized, sampled[:, 3:]], axis=1)
+
+        return result
+
     async def capture_all_from_camera(
         self,
         camera_name: str,
