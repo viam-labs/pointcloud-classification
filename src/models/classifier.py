@@ -399,8 +399,58 @@ class Classifier(Vision, EasyResource):
         extra: Optional[Mapping[str, ValueTypes]] = None,
         timeout: Optional[float] = None,
     ) -> List[Classification]:
-        self.logger.error("`get_classifications_from_camera` is not implemented")
-        raise NotImplementedError()
+        """Get classifications from point cloud captured by camera."""
+        # Get metadata
+        metadata = await self.mlmodel.metadata()
+        (
+            input_name,
+            target_points,
+            target_features,
+            has_batch_dim,
+            output_name,
+            class_names,
+        ) = self._parse_metadata(metadata)
+
+        # Get camera
+        if camera_name == "" and self.default_camera == "":
+            raise ValueError(
+                "No camera name provided and no default camera name configured"
+            )
+        elif camera_name == "":
+            camera_name = self.default_camera
+        camera = self.getCamera(camera_name)
+
+        # Get point cloud
+        pcd_bytes, mimetype = await camera.get_point_cloud(
+            extra=extra, timeout=timeout
+        )
+
+        # Parse with Open3D
+        cloud = self._parse_point_cloud(pcd_bytes, mimetype)
+
+        # Preprocess
+        sampling_method = getattr(self, "sampling_method", "random")
+        preprocessed = self._preprocess_point_cloud(
+            cloud, target_points, target_features, sampling_method
+        )
+
+        # Add batch dimension if needed
+        if has_batch_dim:
+            preprocessed = preprocessed[np.newaxis, ...]
+
+        # Inference
+        input_tensors = {input_name: preprocessed}
+        output_tensors = await self.mlmodel.infer(
+            input_tensors, extra=extra, timeout=timeout
+        )
+
+        # Extract output
+        logits = output_tensors[output_name]
+        if has_batch_dim:
+            logits = logits[0]  # Remove batch dimension
+
+        # Convert to classifications
+        return self._logits_to_classifications(logits, class_names, count)
 
     async def get_classifications(
         self,

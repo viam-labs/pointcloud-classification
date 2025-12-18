@@ -274,3 +274,72 @@ def test_preprocess_point_cloud_missing_rgb():
         Classifier._preprocess_point_cloud(
             classifier, pcd, 100, 6, "random"
         )
+
+
+@pytest.mark.asyncio
+async def test_get_classifications_from_camera_integration():
+    """Integration test for get_classifications_from_camera"""
+    # Setup mocks
+    mock_camera = AsyncMock()
+    mock_mlmodel = AsyncMock()
+
+    # Create test point cloud bytes
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(np.random.rand(2000, 3) * 10)
+
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix='.pcd', delete=False) as f:
+        o3d.io.write_point_cloud(f.name, pcd)
+        with open(f.name, 'rb') as pcd_file:
+            pcd_bytes = pcd_file.read()
+
+    mock_camera.get_point_cloud = AsyncMock(return_value=(pcd_bytes, "application/pcd"))
+
+    # Mock metadata
+    mock_input = MagicMock()
+    mock_input.name = "points"
+    mock_input.shape = [1024, 3]
+
+    mock_output = MagicMock()
+    mock_output.name = "logits"
+    mock_output.shape = [3]
+    mock_output.associated_files = []
+
+    mock_metadata = MagicMock()
+    mock_metadata.input_info = [mock_input]
+    mock_metadata.output_info = [mock_output]
+    mock_mlmodel.metadata = AsyncMock(return_value=mock_metadata)
+
+    # Mock inference output
+    output_logits = np.array([2.0, 1.0, 3.0])
+    mock_mlmodel.infer = AsyncMock(return_value={"logits": output_logits})
+
+    # Create classifier instance
+    from viam.proto.app.robot import ComponentConfig
+    from google.protobuf.struct_pb2 import Struct
+
+    config = ComponentConfig()
+    config.name = "test_classifier"
+    attrs = Struct()
+    attrs["mlmodel_name"] = "test_model"
+    attrs["camera_name"] = "test_camera"
+    config.attributes.CopyFrom(attrs)
+
+    # Create mock dependencies
+    from viam.components.camera import Camera
+    from viam.services.mlmodel import MLModel
+
+    dependencies = {
+        Camera.get_resource_name("test_camera"): mock_camera,
+        MLModel.get_resource_name("test_model"): mock_mlmodel,
+    }
+
+    classifier = Classifier.new(config, dependencies)
+
+    # Test
+    results = await classifier.get_classifications_from_camera("test_camera", count=2)
+
+    assert len(results) == 2
+    assert results[0].class_name == "2"  # Highest logit
+    assert results[1].class_name == "0"  # Second highest
+    assert results[0].confidence > results[1].confidence
