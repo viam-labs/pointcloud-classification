@@ -430,3 +430,28 @@ async def test_capture_all_from_camera_with_classifications():
     assert result.classifications is not None
     assert len(result.classifications) > 0
     assert result.classifications[0].class_name == "4"  # Highest logit (5.0 at index 4)
+
+
+@pytest.mark.asyncio
+async def test_get_classifications_raises_not_implemented():
+    """Test get_classifications raises helpful error"""
+    from viam.proto.app.robot import ComponentConfig
+    from google.protobuf.struct_pb2 import Struct
+    from viam.services.mlmodel import MLModel
+
+    config = ComponentConfig()
+    config.name = "test"
+    attrs = Struct()
+    attrs["mlmodel_name"] = "model"
+    config.attributes.CopyFrom(attrs)
+
+    dependencies = {
+        MLModel.get_resource_name("model"): AsyncMock(),
+    }
+
+    classifier = Classifier.new(config, dependencies)
+
+    mock_image = MagicMock()
+
+    with pytest.raises(NotImplementedError, match="not supported"):
+        await classifier.get_classifications(mock_image, count=5)

@@ -471,8 +471,11 @@ class Classifier(Vision, EasyResource):
         extra: Optional[Mapping[str, ValueTypes]] = None,
         timeout: Optional[float] = None,
     ) -> List[Classification]:
-        self.logger.error("`get_classifications` is not implemented")
-        raise NotImplementedError()
+        self.logger.error("Point cloud classification requires camera input")
+        raise NotImplementedError(
+            "get_classifications() not supported for point clouds; "
+            "use get_classifications_from_camera() instead"
+        )
 
     async def get_object_point_clouds(
         self,
