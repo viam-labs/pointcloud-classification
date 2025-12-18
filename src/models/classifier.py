@@ -150,6 +150,40 @@ class Classifier(Vision, EasyResource):
             class_names,
         )
 
+    def _logits_to_classifications(
+        self, logits: "np.ndarray", class_names: Optional[List[str]], count: int
+    ) -> List[Classification]:
+        """
+        Convert model logits to Classification objects.
+
+        Args:
+            logits: Raw model output (1D array)
+            class_names: List of class names (or None to use indices)
+            count: Number of top classifications to return
+
+        Returns:
+            List[Classification] sorted by confidence descending
+        """
+        # Apply softmax: probabilities = exp(logits) / sum(exp(logits))
+        # Subtract max for numerical stability
+        exp_logits = np.exp(logits - np.max(logits))
+        probs = exp_logits / exp_logits.sum()
+
+        # Sort by probability descending
+        indices = np.argsort(probs)[::-1]
+
+        # Take top count items
+        top_indices = indices[:count]
+
+        # Create Classification objects
+        if class_names is None:
+            class_names = [str(i) for i in range(len(logits))]
+
+        return [
+            Classification(class_name=class_names[i], confidence=float(probs[i]))
+            for i in top_indices
+        ]
+
     async def capture_all_from_camera(
         self,
         camera_name: str,
