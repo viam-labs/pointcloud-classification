@@ -1,5 +1,6 @@
 from typing import ClassVar, List, Mapping, Optional, Sequence, Tuple, cast
 
+import numpy as np
 from typing_extensions import Self
 from viam.components.camera import Camera
 from viam.services.mlmodel import MLModel
@@ -93,6 +94,61 @@ class Classifier(Vision, EasyResource):
                 f"Unable to configure pointcloud classifier vision service: {err}"
             )
             raise err
+
+    def _parse_metadata(self, metadata):
+        """
+        Parse metadata to extract model requirements.
+
+        Args:
+            metadata: MLModel metadata object
+
+        Returns:
+            Tuple of (input_name, target_points, target_features, has_batch_dim,
+                     output_name, class_names)
+
+        Raises:
+            ValueError: If shape is dynamic or unexpected format
+        """
+        # Get first input tensor info
+        input_info = metadata.input_info[0]
+        input_name = input_info.name
+        shape = list(input_info.shape)
+
+        # Parse shape: [N, F] or [1, N, F]
+        if len(shape) == 2:
+            has_batch_dim = False
+            target_points, target_features = shape
+        elif len(shape) == 3 and shape[0] == 1:
+            has_batch_dim = True
+            target_points, target_features = shape[1], shape[2]
+        else:
+            raise ValueError(f"Unexpected input shape: {shape}")
+
+        # Check for dynamic shapes
+        if target_points == -1 or target_features == -1:
+            raise ValueError(
+                f"Model has dynamic input shape {shape}; cannot determine requirements"
+            )
+
+        # Get output info
+        output_info = metadata.output_info[0]
+        output_name = output_info.name
+
+        # Try to load class labels from associated_files
+        class_names = None
+        if hasattr(output_info, 'associated_files') and output_info.associated_files:
+            # TODO: Parse label file in future enhancement
+            # For now, just set to None
+            pass
+
+        return (
+            input_name,
+            int(target_points),
+            int(target_features),
+            has_batch_dim,
+            output_name,
+            class_names,
+        )
 
     async def capture_all_from_camera(
         self,
