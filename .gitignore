@@ -167,3 +167,4 @@ cython_debug/
 .VIAM_RELOAD_ARCHIVE.tar.gz
 reload-*/
 CLAUDE.md
+./docs/plans/
