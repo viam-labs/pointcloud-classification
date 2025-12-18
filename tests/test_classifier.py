@@ -116,3 +116,27 @@ def test_logits_to_classifications_no_labels():
     assert len(result) == 2
     assert result[0].class_name == "1"  # Index of highest logit
     assert result[1].class_name == "2"  # Index of second highest
+
+
+def test_normalize_point_cloud():
+    """Test point cloud normalization to unit sphere"""
+    # Create test points: cube from -10 to 10
+    points = np.array([
+        [10.0, 10.0, 10.0],
+        [-10.0, -10.0, -10.0],
+        [5.0, 5.0, 5.0],
+        [0.0, 0.0, 0.0]
+    ])
+
+    classifier = MagicMock(spec=Classifier)
+    result = Classifier._normalize_point_cloud(classifier, points)
+
+    # Check centered (mean near zero)
+    assert np.allclose(result.mean(axis=0), [0, 0, 0], atol=1e-10)
+
+    # Check scaled (max distance from center is 1)
+    distances = np.sqrt((result ** 2).sum(axis=1))
+    assert np.allclose(distances.max(), 1.0, atol=1e-6)
+
+    # Check shape unchanged
+    assert result.shape == points.shape

@@ -184,6 +184,29 @@ class Classifier(Vision, EasyResource):
             for i in top_indices
         ]
 
+    def _normalize_point_cloud(self, points: "np.ndarray") -> "np.ndarray":
+        """
+        Normalize point cloud to unit sphere.
+
+        Args:
+            points: Nx3 array of XYZ coordinates
+
+        Returns:
+            Normalized points centered at origin, scaled to unit sphere
+        """
+        # Center at origin
+        centered = points - points.mean(axis=0)
+
+        # Scale to unit sphere by max distance from origin
+        distances = np.sqrt((centered ** 2).sum(axis=1))
+        max_dist = distances.max()
+        if max_dist > 0:
+            normalized = centered / max_dist
+        else:
+            normalized = centered
+
+        return normalized
+
     async def capture_all_from_camera(
         self,
         camera_name: str,
