@@ -237,6 +237,45 @@ class Classifier(Vision, EasyResource):
         indices = np.random.choice(current_count, target_count, replace=(current_count < target_count))
         return points[indices]
 
+    def _parse_point_cloud(self, pcd_bytes: bytes, mimetype: str) -> "o3d.geometry.PointCloud":
+        """
+        Parse point cloud bytes into Open3D PointCloud object.
+
+        Args:
+            pcd_bytes: Raw point cloud bytes from camera
+            mimetype: MIME type of the point cloud data
+
+        Returns:
+            Open3D PointCloud object
+
+        Raises:
+            RuntimeError: If parsing fails
+        """
+        import open3d as o3d
+        import tempfile
+        import os
+
+        try:
+            # Write bytes to temporary file
+            # Open3D requires file path, not bytes directly
+            with tempfile.NamedTemporaryFile(suffix='.pcd', delete=False) as tmp_file:
+                tmp_file.write(pcd_bytes)
+                tmp_path = tmp_file.name
+
+            # Read point cloud from file
+            pcd = o3d.io.read_point_cloud(tmp_path)
+
+            # Clean up temp file
+            os.unlink(tmp_path)
+
+            if len(pcd.points) == 0:
+                raise RuntimeError("Parsed point cloud is empty")
+
+            return pcd
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to parse point cloud data: {e}")
+
     async def capture_all_from_camera(
         self,
         camera_name: str,

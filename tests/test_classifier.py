@@ -3,6 +3,8 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from viam.proto.service.vision import Classification
 from viam.services.mlmodel import Metadata, TensorInfo
+import open3d as o3d
+import io
 
 from src.models.classifier import Classifier
 
@@ -182,3 +184,31 @@ def test_sample_point_cloud_exact_count():
     result = Classifier._sample_point_cloud(classifier, points, target_count, "random")
 
     assert result.shape == (1024, 3)
+
+
+def test_parse_point_cloud_pcd_format():
+    """Test parsing PCD format point cloud bytes"""
+    # Create a simple point cloud
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(np.array([
+        [1.0, 2.0, 3.0],
+        [4.0, 5.0, 6.0],
+        [7.0, 8.0, 9.0]
+    ]))
+
+    # Convert to bytes (simulate camera.get_point_cloud output)
+    # Write to buffer
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix='.pcd', delete=False) as f:
+        o3d.io.write_point_cloud(f.name, pcd)
+        f.seek(0)
+        with open(f.name, 'rb') as pcd_file:
+            pcd_bytes = pcd_file.read()
+
+    classifier = MagicMock(spec=Classifier)
+    result = Classifier._parse_point_cloud(classifier, pcd_bytes, "application/pcd")
+
+    assert isinstance(result, o3d.geometry.PointCloud)
+    points = np.asarray(result.points)
+    assert points.shape == (3, 3)
+    assert np.allclose(points[0], [1.0, 2.0, 3.0])
