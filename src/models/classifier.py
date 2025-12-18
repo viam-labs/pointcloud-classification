@@ -244,6 +244,7 @@ class Classifier(Vision, EasyResource):
         Args:
             pcd_bytes: Raw point cloud bytes from camera
             mimetype: MIME type of the point cloud data
+                     TODO: Use mimetype to support multiple formats in future
 
         Returns:
             Open3D PointCloud object
@@ -256,22 +257,19 @@ class Classifier(Vision, EasyResource):
         import os
 
         try:
-            # Write bytes to temporary file
-            # Open3D requires file path, not bytes directly
             with tempfile.NamedTemporaryFile(suffix='.pcd', delete=False) as tmp_file:
                 tmp_file.write(pcd_bytes)
                 tmp_path = tmp_file.name
 
-            # Read point cloud from file
-            pcd = o3d.io.read_point_cloud(tmp_path)
+            try:
+                pcd = o3d.io.read_point_cloud(tmp_path)
 
-            # Clean up temp file
-            os.unlink(tmp_path)
+                if len(pcd.points) == 0:
+                    raise RuntimeError("Parsed point cloud is empty")
 
-            if len(pcd.points) == 0:
-                raise RuntimeError("Parsed point cloud is empty")
-
-            return pcd
+                return pcd
+            finally:
+                os.unlink(tmp_path)
 
         except Exception as e:
             raise RuntimeError(f"Failed to parse point cloud data: {e}")
