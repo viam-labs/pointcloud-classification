@@ -25,6 +25,7 @@ class Classifier(Vision, EasyResource):
 
     mlmodel: MLModel
     default_camera: str
+    labels: Optional[List[str]]
 
     @classmethod
     def new(
@@ -141,13 +142,13 @@ class Classifier(Vision, EasyResource):
         # Get output info
         output_info = metadata.output_info[0]
         output_name = output_info.name
+        output_extras = struct_to_dict(output_info.extra)
 
-        # Try to load class labels from associated_files
+        # Try to load class labels from extra
         class_names = None
-        if hasattr(output_info, "associated_files") and output_info.associated_files:
-            # TODO: Parse label file in future enhancement
-            # For now, just set to None
-            pass
+        if label_path := output_extras.get("labels"):
+            with open(label_path, "r") as f:
+                class_names = f.read().splitlines()
 
         return (
             input_name,
