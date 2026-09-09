@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=2.3.5",
-    "viam-sdk>=0.79.1",
+    "viam-sdk>=0.80.0",
 ]
 
 [project.optional-dependencies]
