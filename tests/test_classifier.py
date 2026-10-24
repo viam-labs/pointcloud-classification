@@ -479,6 +479,30 @@ async def test_get_classifications_raises_not_implemented():
         await classifier.get_classifications(mock_image, count=5)
 
 
+@pytest.mark.asyncio
+async def test_get_detections_3d_raises_not_implemented():
+    """viam-sdk 0.84.0 made get_detections_3d abstract, so Classifier must
+    define it to be instantiable at all."""
+    from google.protobuf.struct_pb2 import Struct
+    from viam.proto.app.robot import ComponentConfig
+    from viam.services.mlmodel import MLModel
+
+    config = ComponentConfig()
+    config.name = "test"
+    attrs = Struct()
+    attrs["mlmodel_name"] = "model"
+    config.attributes.CopyFrom(attrs)
+
+    dependencies = {
+        MLModel.get_resource_name("model"): AsyncMock(),
+    }
+
+    classifier = Classifier.new(config, dependencies)
+
+    with pytest.raises(NotImplementedError):
+        await classifier.get_detections_3d("camera")
+
+
 def test_reconfigure_with_sampling_method():
     """Test that sampling_method is stored from config"""
     from google.protobuf.struct_pb2 import Struct
