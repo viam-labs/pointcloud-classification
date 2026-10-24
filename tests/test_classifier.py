@@ -4,7 +4,10 @@ import numpy as np
 import pytest
 
 from src.models.classifier import Classifier
-from src.utils.pointcloud import PointCloud
+
+# classifier.py imports PointCloud as utils.pointcloud, which is a different
+# module object from src.utils.pointcloud, so isinstance checks need this one.
+from utils.pointcloud import PointCloud
 
 
 def _create_pcd_bytes(points: np.ndarray, colors: np.ndarray = None) -> bytes:
