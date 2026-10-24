@@ -1,9 +1,13 @@
-import numpy as np
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+import numpy as np
+import pytest
+
 from src.models.classifier import Classifier
-from src.utils.pointcloud import PointCloud
+
+# classifier.py imports PointCloud as utils.pointcloud, which is a different
+# module object from src.utils.pointcloud, so isinstance checks need this one.
+from utils.pointcloud import PointCloud
 
 
 def _create_pcd_bytes(points: np.ndarray, colors: np.ndarray = None) -> bytes:
@@ -28,13 +32,15 @@ def _create_pcd_bytes(points: np.ndarray, colors: np.ndarray = None) -> bytes:
         header_lines.append("TYPE F F F")
         header_lines.append("COUNT 1 1 1")
 
-    header_lines.extend([
-        f"WIDTH {num_points}",
-        "HEIGHT 1",
-        "VIEWPOINT 0 0 0 1 0 0 0",
-        f"POINTS {num_points}",
-        "DATA ascii",
-    ])
+    header_lines.extend(
+        [
+            f"WIDTH {num_points}",
+            "HEIGHT 1",
+            "VIEWPOINT 0 0 0 1 0 0 0",
+            f"POINTS {num_points}",
+            "DATA ascii",
+        ]
+    )
 
     # Create data lines
     data_lines = []
@@ -85,7 +91,7 @@ def test_parse_metadata_no_batch_dim():
     assert input_name == "points"
     assert target_points == 1024
     assert target_features == 3
-    assert has_batch_dim == False
+    assert has_batch_dim is False
     assert output_name == "logits"
     assert class_names is None
 
@@ -121,7 +127,7 @@ def test_parse_metadata_with_batch_dim():
     assert input_name == "input_points"
     assert target_points == 2048
     assert target_features == 6
-    assert has_batch_dim == True
+    assert has_batch_dim is True
     assert output_name == "output_logits"
 
 
@@ -185,12 +191,14 @@ def test_logits_to_classifications_no_labels():
 def test_normalize_point_cloud():
     """Test point cloud normalization to unit sphere"""
     # Create test points: cube from -10 to 10
-    points = np.array([
-        [10.0, 10.0, 10.0],
-        [-10.0, -10.0, -10.0],
-        [5.0, 5.0, 5.0],
-        [0.0, 0.0, 0.0],
-    ])
+    points = np.array(
+        [
+            [10.0, 10.0, 10.0],
+            [-10.0, -10.0, -10.0],
+            [5.0, 5.0, 5.0],
+            [0.0, 0.0, 0.0],
+        ]
+    )
 
     classifier = MagicMock(spec=Classifier)
     result = Classifier._normalize_point_cloud(classifier, points)
@@ -363,8 +371,8 @@ async def test_get_classifications_from_camera_integration():
     mock_mlmodel.infer = AsyncMock(return_value={"logits": output_logits})
 
     # Create classifier instance
-    from viam.proto.app.robot import ComponentConfig
     from google.protobuf.struct_pb2 import Struct
+    from viam.proto.app.robot import ComponentConfig
 
     config = ComponentConfig()
     config.name = "test_classifier"
@@ -420,9 +428,9 @@ async def test_capture_all_from_camera_with_classifications():
     mock_mlmodel.metadata = AsyncMock(return_value=mock_metadata)
     mock_mlmodel.infer = AsyncMock(return_value={"logits": np.array([1, 2, 3, 4, 5])})
 
-    from viam.proto.app.robot import ComponentConfig
     from google.protobuf.struct_pb2 import Struct
     from viam.components.camera import Camera
+    from viam.proto.app.robot import ComponentConfig
     from viam.services.mlmodel import MLModel
 
     config = ComponentConfig()
@@ -452,8 +460,8 @@ async def test_capture_all_from_camera_with_classifications():
 @pytest.mark.asyncio
 async def test_get_classifications_raises_not_implemented():
     """Test get_classifications raises helpful error"""
-    from viam.proto.app.robot import ComponentConfig
     from google.protobuf.struct_pb2 import Struct
+    from viam.proto.app.robot import ComponentConfig
     from viam.services.mlmodel import MLModel
 
     config = ComponentConfig()
@@ -474,10 +482,34 @@ async def test_get_classifications_raises_not_implemented():
         await classifier.get_classifications(mock_image, count=5)
 
 
+@pytest.mark.asyncio
+async def test_get_detections_3d_raises_not_implemented():
+    """viam-sdk 0.84.0 made get_detections_3d abstract, so Classifier must
+    define it to be instantiable at all."""
+    from google.protobuf.struct_pb2 import Struct
+    from viam.proto.app.robot import ComponentConfig
+    from viam.services.mlmodel import MLModel
+
+    config = ComponentConfig()
+    config.name = "test"
+    attrs = Struct()
+    attrs["mlmodel_name"] = "model"
+    config.attributes.CopyFrom(attrs)
+
+    dependencies = {
+        MLModel.get_resource_name("model"): AsyncMock(),
+    }
+
+    classifier = Classifier.new(config, dependencies)
+
+    with pytest.raises(NotImplementedError):
+        await classifier.get_detections_3d("camera")
+
+
 def test_reconfigure_with_sampling_method():
     """Test that sampling_method is stored from config"""
-    from viam.proto.app.robot import ComponentConfig
     from google.protobuf.struct_pb2 import Struct
+    from viam.proto.app.robot import ComponentConfig
     from viam.services.mlmodel import MLModel
 
     config = ComponentConfig()
@@ -498,8 +530,8 @@ def test_reconfigure_with_sampling_method():
 
 def test_reconfigure_default_sampling_method():
     """Test default sampling_method is random"""
-    from viam.proto.app.robot import ComponentConfig
     from google.protobuf.struct_pb2 import Struct
+    from viam.proto.app.robot import ComponentConfig
     from viam.services.mlmodel import MLModel
 
     config = ComponentConfig()

@@ -1,11 +1,17 @@
-from typing import ClassVar, List, Mapping, Optional, Sequence, Tuple, cast
+from typing import (
+    TYPE_CHECKING,
+    ClassVar,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    cast,
+)
 
 import numpy as np
 from typing_extensions import Self
-
-from utils.pointcloud import PointCloud, parse_pcd_bytes
 from viam.components.camera import Camera
-from viam.services.mlmodel import MLModel, Metadata
 from viam.media.video import ViamImage
 from viam.proto.app.robot import ComponentConfig
 from viam.proto.common import PointCloudObject, ResourceName
@@ -13,8 +19,16 @@ from viam.proto.service.vision import Classification, Detection
 from viam.resource.base import ResourceBase
 from viam.resource.easy_resource import EasyResource
 from viam.resource.types import Model, ModelFamily
-from viam.services.vision import Vision, CaptureAllResult
+from viam.services.mlmodel import Metadata, MLModel
+from viam.services.vision import CaptureAllResult, Vision
 from viam.utils import ValueTypes, struct_to_dict
+
+from utils.pointcloud import PointCloud, parse_pcd_bytes
+
+if TYPE_CHECKING:
+    # Detection3D exists only in viam-sdk 0.84.0 and later, and pyproject.toml
+    # allows older versions.
+    from viam.proto.service.vision import Detection3D
 
 
 class Classifier(Vision, EasyResource):
@@ -399,6 +413,16 @@ class Classifier(Vision, EasyResource):
         timeout: Optional[float] = None,
     ) -> List[Detection]:
         self.logger.error("`get_detections` is not implemented")
+        raise NotImplementedError()
+
+    async def get_detections_3d(
+        self,
+        camera_name: str,
+        *,
+        extra: Optional[Mapping[str, ValueTypes]] = None,
+        timeout: Optional[float] = None,
+    ) -> List["Detection3D"]:
+        self.logger.error("`get_detections_3d` is not implemented")
         raise NotImplementedError()
 
     async def get_classifications_from_camera(
